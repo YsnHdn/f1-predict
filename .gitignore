@@ -1,0 +1,70 @@
+# Environnement virtuel
+venv/
+env/
+ENV/
+
+# Fichiers Python compilés
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# Fichiers de données
+data/raw/
+data/processed/
+*.csv
+*.json
+*.pkl
+*.h5
+
+# Fichiers de configuration locaux
+.env
+.env.local
+.env.*.local
+config.local.py
+
+# Fichiers de cache
+.cache/
+.pytest_cache/
+api/cache/data/
+.coverage
+htmlcov/
+
+# Fichiers de log
+*.log
+logs/
+
+# Fichiers Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# Fichiers de système d'exploitation
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Fichiers d'IDE et d'éditeurs
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+
+# Fichiers temporaires
+tmp/
+temp/
+
+# Dossiers FastF1 spécifiques
+.fastf1_cache/
+
+# Fichiers streamlit
+.streamlit/secrets.toml
