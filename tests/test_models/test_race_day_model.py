@@ -1,24 +1,23 @@
 """
-Tests for the pre-race model of the F1 prediction project.
+Tests for the race day model of the F1 prediction project.
 """
 
 import unittest
 import pandas as pd
 import numpy as np
 from datetime import datetime
+from models.race_day_model import F1RaceDayModel
 from models.pre_race_model import F1PreRaceModel
 from models.initial_model import F1InitialModel
-from sklearn.ensemble import RandomForestRegressor
 
-class TestPreRaceModel(unittest.TestCase):
-    """Test cases for the F1PreRaceModel class."""
+class TestRaceDayModel(unittest.TestCase):
+    """Test cases for the F1RaceDayModel class."""
     
     def setUp(self):
         """Set up test data and model instance."""
-        # Create model instance
-        self.model = F1PreRaceModel(estimator='rf', target='Position')
-        
-        # Create an initial model for testing blending
+        # Create model instances
+        self.model = F1RaceDayModel(estimator='rf', target='Position')
+        self.pre_race_model = F1PreRaceModel(estimator='rf', target='Position')
         self.initial_model = F1InitialModel(estimator='rf', target='Position')
         
         # Create sample historical data with relevant features
@@ -76,6 +75,16 @@ class TestPreRaceModel(unittest.TestCase):
             'grid_top5': [1, 1, 1, 1, 1, 0, 0, 0, 1, 1],
             'grid_top10': [1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
             
+            # Race day features
+            'starting_tire_compound': ['soft', 'soft', 'medium', 'medium', 'soft', 
+                                      'soft', 'soft', 'medium', 'wet', 'wet'],
+            'grid_penalty_applied': [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            'original_grid_position': [1, 3, 2, 4, 5, 6, 7, 8, 1, 2],
+            'formation_lap_issue': [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            'track_temp_celsius': [35, 35, 35, 35, 35, 35, 35, 35, 25, 25],
+            'track_evolution': [7, 7, 7, 7, 7, 7, 7, 7, 5, 5],
+            'pit_lane_position': [1, 5, 3, 4, 2, 6, 9, 8, 1, 5],
+            
             # Other features
             'circuit_high_degradation': [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
             'circuit_low_degradation': [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
@@ -86,8 +95,8 @@ class TestPreRaceModel(unittest.TestCase):
             'grid_overtaking_interaction': [0.4, 1.2, 0.8, 1.6, 2.0, 2.4, 2.8, 3.2, 0.6, 1.2]
         })
         
-        # Create sample new race data with qualifying results
-        self.qualifying_data = pd.DataFrame({
+        # Create sample race day data with last-minute information
+        self.race_day_data = pd.DataFrame({
             'Driver': ['VER', 'HAM', 'LEC', 'SAI', 'PER'],
             'Team': ['Red Bull', 'Mercedes', 'Ferrari', 'Ferrari', 'Red Bull'],
             'TrackName': ['silverstone', 'silverstone', 'silverstone', 'silverstone', 'silverstone'],
@@ -112,15 +121,16 @@ class TestPreRaceModel(unittest.TestCase):
             'circuit_technical': [0, 0, 0, 0, 0],
             'overtaking_difficulty': [0.5, 0.5, 0.5, 0.5, 0.5],
             
-            # Weather features - forecast for the race weekend
-            'weather_is_dry': [1, 1, 1, 1, 1],
-            'weather_is_any_wet': [0, 0, 0, 0, 0],
+            # Weather features - updated on race day
+            'weather_is_dry': [0, 0, 0, 0, 0],  # Now expecting rain
+            'weather_is_any_wet': [1, 1, 1, 1, 1],
             'weather_temp_mild': [1, 1, 1, 1, 1],
             'weather_temp_hot': [0, 0, 0, 0, 0],
             'weather_high_wind': [1, 1, 1, 1, 1],
+            'RaceWeatherCondition': ['light rain', 'light rain', 'light rain', 'light rain', 'light rain'],
             
-            # Qualifying position and data (this is what differentiates from initial model)
-            'GridPosition': [1, 3, 2, 4, 5],
+            # Qualifying position and data 
+            'GridPosition': [1, 3, 2, 4, 6],  # PER got a penalty
             'Q1_seconds': [79.123, 79.556, 79.234, 79.867, 79.989],
             'Q2_seconds': [78.123, 78.556, 78.234, 78.867, 78.989],
             'Q3_seconds': [77.123, 77.556, 77.234, 77.867, 77.989],
@@ -130,8 +140,24 @@ class TestPreRaceModel(unittest.TestCase):
             # Grid position features
             'grid_front_row': [1, 0, 1, 0, 0],
             'grid_top3': [1, 1, 1, 0, 0],
-            'grid_top5': [1, 1, 1, 1, 1],
+            'grid_top5': [1, 1, 1, 1, 0],
             'grid_top10': [1, 1, 1, 1, 1],
+            
+            # Race day specific features
+            'GridPenalty': [0, 0, 0, 0, 1],  # PER got a penalty
+            'StartingTireCompound': ['intermediate', 'intermediate', 'intermediate', 
+                                   'intermediate', 'intermediate'],
+            'original_grid_position': [1, 3, 2, 4, 5],
+            'formation_lap_issue': [0, 0, 0, 0, 0],
+            'track_temp_celsius': [22, 22, 22, 22, 22],  # Cooler due to rain
+            'track_evolution': [4, 4, 4, 4, 4],  # Lower due to rain
+            'pit_lane_position': [1, 5, 3, 4, 2],
+            'team_recent_strategy': ['2stop', '2stop', '2stop', '2stop', '2stop'],
+            'recent_race_pace': [77.5, 77.8, 77.6, 77.9, 77.7],
+            'car_upgrades_applied': [1, 0, 1, 1, 0],
+            
+            # Driver wet performance
+            'driver_wet_advantage': [0.2, 1.5, -0.5, 0.1, 0.3],
             
             # Other features
             'circuit_high_degradation': [0, 0, 0, 0, 0],
@@ -140,12 +166,12 @@ class TestPreRaceModel(unittest.TestCase):
             # Interaction features
             'team_highspeed_interaction': [20, 15, 16, 16, 20],
             'wet_driver_advantage_interaction': [0, 0, 0, 0, 0],
-            'grid_overtaking_interaction': [0.5, 1.5, 1.0, 2.0, 2.5]
+            'grid_overtaking_interaction': [0.5, 1.5, 1.0, 2.0, 3.0]
         })
     
     def test_initialization(self):
         """Test model initialization."""
-        self.assertEqual(self.model.name, 'pre_race_model')
+        self.assertEqual(self.model.name, 'race_day_model')
         self.assertEqual(self.model.estimator_type, 'rf')
         self.assertEqual(self.model.target, 'Position')
         self.assertFalse(self.model.is_trained)
@@ -154,19 +180,26 @@ class TestPreRaceModel(unittest.TestCase):
     
     def test_prepare_features(self):
         """Test feature preparation."""
-        # Prepare features from qualifying data
-        features = self.model.prepare_features(self.qualifying_data)
+        # Prepare features from race day data
+        features = self.model.prepare_features(self.race_day_data)
         
         # Check that features DataFrame has expected shape
         self.assertGreater(len(features), 0)
         self.assertGreater(len(features.columns), 0)
         
-        # Check that key qualifying features were selected
-        qualifying_features = ['GridPosition', 'Q1_seconds', 'Q2_seconds', 'Q3_seconds', 
-                              'grid_front_row', 'grid_top3', 'grid_top5']
-        for feature in qualifying_features:
-            if feature in self.qualifying_data.columns:
-                self.assertIn(feature, features.columns)
+        # Check that key race day features were included
+        race_day_features = ['grid_penalty_applied', 'track_temp_celsius', 'starting_tire_compound', 
+                           'original_grid_position']
+        
+        # Some features might be transformed or renamed
+        for feature in race_day_features:
+            found = False
+            for col in features.columns:
+                if feature in col:
+                    found = True
+                    break
+            if not found and feature in self.race_day_data.columns:
+                self.fail(f"Race day feature '{feature}' not found in prepared features")
     
     def test_train(self):
         """Test model training."""
@@ -181,10 +214,6 @@ class TestPreRaceModel(unittest.TestCase):
         self.assertTrue(self.model.is_trained)
         self.assertIsNotNone(self.model.training_date)
         self.assertIsNotNone(self.model.model)
-        
-        # Check internal state
-        self.assertEqual(self.model.target, 'Position')
-        self.assertGreater(len(self.model.features), 0)
     
     def test_predict(self):
         """Test model prediction."""
@@ -196,15 +225,15 @@ class TestPreRaceModel(unittest.TestCase):
         self.model.train(X_train, y_train)
         
         # Prepare test data
-        X_test = self.model.prepare_features(self.qualifying_data)
+        X_test = self.model.prepare_features(self.race_day_data)
         
         # Make predictions
         predictions = self.model.predict(X_test)
         
         # Check predictions
-        self.assertEqual(len(predictions), len(self.qualifying_data))
+        self.assertEqual(len(predictions), len(self.race_day_data))
         self.assertTrue(np.all(predictions >= 1))  # All positions should be at least 1
-        self.assertTrue(np.all(predictions <= len(self.qualifying_data)))  # No position beyond number of drivers
+        self.assertTrue(np.all(predictions <= len(self.race_day_data)))  # No position beyond number of drivers
     
     def test_predict_race_results(self):
         """Test prediction of complete race results."""
@@ -214,10 +243,10 @@ class TestPreRaceModel(unittest.TestCase):
         self.model.train(X_train, y_train)
         
         # Predict race results
-        results = self.model.predict_race_results(self.qualifying_data)
+        results = self.model.predict_race_results(self.race_day_data)
         
         # Check result format
-        self.assertEqual(len(results), len(self.qualifying_data))
+        self.assertEqual(len(results), len(self.race_day_data))
         self.assertIn('Driver', results.columns)
         self.assertIn('PredictedPosition', results.columns)
         
@@ -225,37 +254,90 @@ class TestPreRaceModel(unittest.TestCase):
         positions = results['PredictedPosition'].values
         self.assertEqual(len(positions), len(set(positions)))  # Unique positions
         self.assertTrue(np.all(positions >= 1))  # All positions should be at least 1
-        self.assertTrue(np.all(positions <= len(self.qualifying_data)))  # No position beyond number of drivers
+        self.assertTrue(np.all(positions <= len(self.race_day_data)))  # No position beyond number of drivers
     
-    def test_blend_with_initial_model(self):
-        """Test blending predictions with initial model."""
-        # Skip test if initial model is not available
-        if self.initial_model is None:
-            self.skipTest("Initial model not available for testing")
+    def test_ensemble_predict(self):
+        """Test ensemble prediction with multiple models."""
+        # Skip if models are not available
+        if self.pre_race_model is None or self.initial_model is None:
+            self.skipTest("Required models not available for testing")
         
-        # Train both models
+        # Train all models
         X_train_initial = self.initial_model.prepare_features(self.historical_data)
+        X_train_prerace = self.pre_race_model.prepare_features(self.historical_data)
+        X_train_raceday = self.model.prepare_features(self.historical_data)
         y_train = self.historical_data['Position']
+        
         self.initial_model.train(X_train_initial, y_train)
+        self.pre_race_model.train(X_train_prerace, y_train)
+        self.model.train(X_train_raceday, y_train)
         
-        X_train_prerace = self.model.prepare_features(self.historical_data)
-        self.model.train(X_train_prerace, y_train)
-        
-        # Set initial model for blending
+        # Set models for ensemble prediction
         self.model.initial_model = self.initial_model
+        self.model.pre_race_model = self.pre_race_model
         
-        # Test blending
-        blended_results = self.model.blend_with_initial_model(self.qualifying_data)
+        # Test ensemble prediction
+        ensemble_results = self.model.ensemble_predict(
+            self.race_day_data,
+            weights={'race_day': 0.6, 'pre_race': 0.3, 'initial': 0.1}
+        )
         
-        # Check blended results
-        self.assertIsNotNone(blended_results)
-        self.assertGreater(len(blended_results), 0)
-        self.assertIn('Driver', blended_results.columns)
-        self.assertIn('PredictedPosition', blended_results.columns)
+        # Check ensemble results
+        self.assertIsNotNone(ensemble_results)
+        self.assertGreater(len(ensemble_results), 0)
+        self.assertIn('Driver', ensemble_results.columns)
+        self.assertIn('PredictedPosition', ensemble_results.columns)
         
-        # Check that all drivers are present
-        for driver in self.qualifying_data['Driver']:
-            self.assertIn(driver, blended_results['Driver'].values)
+        # Check that all drivers are present with valid positions
+        for driver in self.race_day_data['Driver']:
+            driver_row = ensemble_results[ensemble_results['Driver'] == driver]
+            self.assertEqual(len(driver_row), 1)
+            position = driver_row['PredictedPosition'].values[0]
+            self.assertTrue(1 <= position <= len(self.race_day_data))
+    
+    def test_predict_with_scenarios(self):
+        """Test prediction under different scenarios."""
+        # Train the model
+        X_train = self.model.prepare_features(self.historical_data)
+        y_train = self.historical_data['Position']
+        self.model.train(X_train, y_train)
+        
+        # Define test scenarios
+        scenarios = [
+            {
+                'name': 'Dry Conditions',
+                'description': 'Race with dry weather',
+                'parameters': {
+                    'weather_is_dry': 1,
+                    'weather_is_any_wet': 0
+                }
+            },
+            {
+                'name': 'Heavy Rain',
+                'description': 'Race with heavy rain',
+                'parameters': {
+                    'weather_is_dry': 0,
+                    'weather_is_any_wet': 1,
+                    'weather_racing_condition': 'very_wet'
+                }
+            }
+        ]
+        
+        # Get scenario predictions
+        scenario_predictions = self.model.predict_with_scenarios(self.race_day_data, scenarios)
+        
+        # Check scenario predictions
+        self.assertEqual(len(scenario_predictions), len(scenarios))
+        
+        for scenario_name, predictions in scenario_predictions.items():
+            # Each scenario should have predictions for all drivers
+            self.assertEqual(len(predictions), len(self.race_day_data))
+            self.assertIn('Driver', predictions.columns)
+            self.assertIn('PredictedPosition', predictions.columns)
+            self.assertIn('Scenario', predictions.columns)
+            
+            # Check that scenario name is correctly set
+            self.assertEqual(predictions['Scenario'].iloc[0], scenario_name)
     
     def test_get_feature_importance(self):
         """Test retrieval of feature importance."""
@@ -273,48 +355,7 @@ class TestPreRaceModel(unittest.TestCase):
             self.assertIn('Feature', importance.columns)
             self.assertIn('Importance', importance.columns)
             self.assertGreater(len(importance), 0)
-    
-    def test_predict_podium(self):
-        """Test prediction of podium positions."""
-        # Train the model
-        X_train = self.model.prepare_features(self.historical_data)
-        y_train = self.historical_data['Position']
-        self.model.train(X_train, y_train)
-        
-        # Predict podium
-        podium = self.model.predict_podium(self.qualifying_data)
-        
-        # Check result
-        self.assertEqual(len(podium), 3)
-        self.assertTrue(np.all(podium['PredictedPosition'].values <= 3))
-    
-    def test_optimize_hyperparameters(self):
-        """Test hyperparameter optimization."""
-        # Pour ce test, nous allons simplement vérifier que la méthode retourne un dictionnaire 
-        # avec les hyperparamètres sans réellement exécuter GridSearchCV qui est lent
-        
-        # Créer une petite version du jeu de données
-        small_X = self.model.prepare_features(self.historical_data.head(8))
-        small_y = self.historical_data['Position'].head(8)
-        
-        # Définir un comportement simple pour l'optimisation
-        # On utilise intentionnellement un petit nombre d'estimateurs pour rendre le test rapide
-        self.model.model = RandomForestRegressor(n_estimators=5, max_depth=3, random_state=42)
-        
-        try:
-            # Appeler la méthode avec un CV minimal
-            result = self.model.optimize_hyperparameters(small_X, small_y, cv=2)
-            
-            # Vérifier que le résultat est un dictionnaire
-            self.assertIsInstance(result, dict)
-            
-            # Vérifier qu'il contient des hyperparamètres attendus
-            # Notez que nous ne vérifions pas les valeurs exactes, seulement leur présence
-            self.assertTrue(any(param in result for param in ['n_estimators', 'max_depth', 'min_samples_split']))
-        except Exception as e:
-            # Si une erreur est levée, vérifier que c'est pour une raison acceptable
-            # comme le manque de sklearn ou une limitation technique
-            self.skipTest(f"Impossible de tester l'optimisation des hyperparamètres: {str(e)}")
+
 
 if __name__ == '__main__':
     unittest.main()

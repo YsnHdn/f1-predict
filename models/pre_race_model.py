@@ -308,25 +308,54 @@ class F1PreRaceModel(F1PredictionModel):
         
         try:
             # Make predictions
-            predictions = self.model.predict(X[feature_cols])
+            raw_predictions = self.model.predict(X[feature_cols])
             
             # For position predictions, ensure they are integers and within valid range
             if self.target.lower() in ['position', 'finishing_position', 'race_position']:
                 # Round to integers
-                predictions = np.round(predictions).astype(int)
+                predictions = np.round(raw_predictions).astype(int)
                 
                 # Ensure positions are within valid range (1 to number of drivers)
                 predictions = np.maximum(1, np.minimum(len(X), predictions))
                 
                 # Handle potential duplicate positions
-                unique_positions = set()
-                for i in range(len(predictions)):
-                    while predictions[i] in unique_positions:
-                        predictions[i] += 1
-                    unique_positions.add(predictions[i])
-            
-            return predictions
-            
+                # Create a set to track assigned positions
+                assigned_positions = set()
+                
+                # Create a copy of the predictions to modify
+                final_predictions = predictions.copy()
+                
+                # Sort drivers by their predicted position (lower is better)
+                indices_by_position = np.argsort(predictions)
+                
+                # Assign unique positions
+                for idx in indices_by_position:
+                    pos = int(predictions[idx])
+                    
+                    # Find the next available position starting from the predicted one
+                    while pos in assigned_positions:
+                        pos += 1
+                    
+                    # If we exceed the number of drivers, we need to find a lower available position
+                    if pos > len(X):
+                        pos = 1
+                        while pos in assigned_positions:
+                            pos += 1
+                    
+                    # Assign the position and mark it as taken
+                    final_predictions[idx] = pos
+                    assigned_positions.add(pos)
+                
+                # Verify all positions are unique and within range
+                assert len(assigned_positions) == len(X), "Failed to assign unique positions to all drivers"
+                assert max(assigned_positions) <= len(X), "Assigned position exceeds number of drivers"
+                assert min(assigned_positions) >= 1, "Assigned position is less than 1"
+                
+                return final_predictions
+            else:
+                # For other targets (like points), return raw predictions
+                return raw_predictions
+                
         except Exception as e:
             logger.error(f"Error during prediction: {str(e)}")
             return np.array([])
