@@ -7,6 +7,7 @@ import logging
 import os
 import json
 import pandas as pd
+import fastf1
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional, Union
 from crewai import Crew, Process, Task
@@ -88,6 +89,40 @@ class SupervisorAgent(F1BaseAgent):
             "to users at precisely the right moments."
         )
     
+    def _get_next_race(self, year: int) -> Dict[str, Any]:
+        """
+        Récupère automatiquement la prochaine course pour l'année spécifiée.
+        
+        Args:
+            year: Année pour laquelle trouver la prochaine course
+        
+        Returns:
+            Dictionnaire avec les informations de la prochaine course
+        """
+        try:
+            # Récupérer le calendrier des courses pour l'année
+            schedule = fastf1.get_event_schedule(year)
+            
+            # Filtrer les courses futures à partir de maintenant
+            future_races = schedule[schedule['EventDate'] > datetime.now()]
+            
+            if future_races.empty:
+                # Si aucune course future n'est trouvée cette année, lever une exception
+                raise ValueError(f"Aucune course future trouvée pour l'année {year}")
+            
+            # Prendre la première course future
+            next_race = future_races.iloc[0]
+            
+            return {
+                'race_name': next_race['EventName'],
+                'circuit': next_race['Circuit'],
+                'race_date': next_race['EventDate']
+            }
+        
+        except Exception as e:
+            self.agent_logger.error(f"Erreur lors de la récupération de la prochaine course : {e}")
+            raise
+
     def _setup_event_subscriptions(self):
         """Set up subscriptions to events from other agents."""
         # Subscribe to data collection events
@@ -113,9 +148,10 @@ class SupervisorAgent(F1BaseAgent):
         Args:
             context: Context with information needed for coordinating agents
                 Expected keys:
-                - race_name: Name of the race
-                - circuit: Circuit identifier
-                - race_date: Date of the race
+                - race_name (optional): Name of the race
+                - circuit (optional): Circuit identifier
+                - race_date (optional): Date of the race
+                - year (optional): Year to find next race
                 - prediction_types: List of prediction types to run ('initial', 'pre_race', 'race_day')
                 
         Returns:
@@ -124,11 +160,23 @@ class SupervisorAgent(F1BaseAgent):
         if context is None:
             context = {}
         
+        # Récupérer l'année depuis le contexte, par défaut l'année courante
+        year = context.get('year', datetime.now().year)
+        prediction_types = context.get('prediction_types', ['initial', 'pre_race', 'race_day'])
+        
+        # Si race_name n'est pas spécifié, le récupérer automatiquement
+        if not context.get('race_name'):
+            try:
+                next_race_info = self._get_next_race(year)
+                context.update(next_race_info)
+            except ValueError as e:
+                self.agent_logger.error(str(e))
+                raise
+        
         # Extract parameters from context
-        race_name = context.get('race_name')
+        race_name = context['race_name']
         circuit = context.get('circuit')
         race_date = context.get('race_date')
-        prediction_types = context.get('prediction_types', ['initial', 'pre_race', 'race_day'])
         
         # Validate inputs
         if not race_name:
@@ -546,3 +594,5 @@ class SupervisorAgent(F1BaseAgent):
             self.agent_logger.info(f"  - Initial prediction after FP1")
             self.agent_logger.info(f"  - Pre-race prediction after qualifying on {qualifying_date}")
             self.agent_logger.info(f"  - Race day prediction 3 hours before race on {race_date}")
+
+# Fin du fichier supervisor.py

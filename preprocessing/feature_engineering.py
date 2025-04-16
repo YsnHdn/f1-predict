@@ -39,7 +39,12 @@ class F1FeatureEngineer:
                 self.numerical_scaler = MinMaxScaler()
                 
         # Initialize encoders
-        self.categorical_encoder = OneHotEncoder(sparse=False, handle_unknown='ignore')
+        try:
+            # Essayer avec le nouveau paramètre (scikit-learn >= 1.2)
+            self.categorical_encoder = OneHotEncoder(sparse_output=False, handle_unknown='ignore')
+        except TypeError:
+            # Fallback pour les anciennes versions (scikit-learn < 1.2)
+            self.categorical_encoder = OneHotEncoder(sparse=False, handle_unknown='ignore')
         
         logger.info(f"Feature engineer initialized with scaling={scale_features}, method={scaling_method}")
     
