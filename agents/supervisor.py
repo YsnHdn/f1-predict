@@ -115,14 +115,14 @@ class SupervisorAgent(F1BaseAgent):
             
             return {
                 'race_name': next_race['EventName'],
-                'circuit': next_race['Circuit'],
+                'circuit': next_race['OfficialEventName'],  # Utilisez 'OfficialEventName' au lieu de 'Circuit'
                 'race_date': next_race['EventDate']
             }
         
         except Exception as e:
             self.agent_logger.error(f"Erreur lors de la récupération de la prochaine course : {e}")
             raise
-
+        
     def _setup_event_subscriptions(self):
         """Set up subscriptions to events from other agents."""
         # Subscribe to data collection events
