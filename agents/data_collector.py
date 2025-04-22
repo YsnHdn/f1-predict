@@ -69,62 +69,36 @@ class DataCollectorAgent(F1BaseAgent):
             "My goal is to provide the most comprehensive and accurate dataset for "
             "building predictive models."
         )
-    
+
     def execute(self, context: Dict[str, Any] = None) -> Dict[str, Any]:
         """
-        Execute the data collection process.
+        Execute the data collection process, focusing only on identifying the next race 
+        and gathering historical data for that circuit.
         
         Args:
             context: Context with information needed for data collection
                 Expected keys:
                 - year: Season year to collect data for
-                - gp_name: Grand Prix name or round number to collect
-                - session_types: List of session types to collect ('R', 'Q', 'FP1', 'FP2', 'FP3', 'S')
-                - historical_years: Number of historical years to collect
+                - historical_years: Number of historical years to collect (default: 3)
                 
         Returns:
-            Dictionary with collected data paths
+            Dictionary with collected data paths and next race information
         """
         if context is None:
             context = {}
         
         # Extract parameters from context
         year = context.get('year', datetime.now().year)
-        gp_name = context.get('gp_name')
-        session_types = context.get('session_types', ['R', 'Q', 'FP1', 'FP2', 'FP3'])
         historical_years = context.get('historical_years', 3)
         
-        self.agent_logger.info(f"Starting data collection for: Year={year}, GP={gp_name}")
-        
-        # Validate input
-        if gp_name is None:
-            # Try to determine the next race if not specified
-            try:
-                calendar = self.fastf1_client.get_race_calendar(year)
-                for _, race in calendar.iterrows():
-                    race_date = pd.to_datetime(race['EventDate'])
-                    if race_date > datetime.now():
-                        gp_name = race['EventName']
-                        self.agent_logger.info(f"Automatically selected next race: {gp_name}")
-                        break
-                
-                if gp_name is None:
-                    self.agent_logger.error("Could not determine next race")
-                    raise ValueError("No Grand Prix specified and could not determine next race")
-            except Exception as e:
-                self.agent_logger.error(f"Error determining next race: {str(e)}")
-                raise
+        self.agent_logger.info(f"Starting data collection for upcoming race in {year}")
         
         # Store results
         results = {
             'year': year,
-            'gp_name': gp_name,
+            'next_race': None,
             'data_paths': {},
-            'calendar': None,
-            'sessions': {},
-            'historical_data': {},
-            'driver_standings': None,
-            'constructor_standings': None
+            'historical_data': {}
         }
         
         try:
@@ -132,134 +106,120 @@ class DataCollectorAgent(F1BaseAgent):
             self.agent_logger.task_start("Fetching race calendar")
             calendar = self.fastf1_client.get_race_calendar(year)
             calendar_path = self._save_data_to_file(calendar, 'calendar', year=year)
-            results['calendar'] = calendar_path
             results['data_paths']['calendar'] = calendar_path
             self.agent_logger.task_complete("Fetching race calendar")
             
-            # Find the specified Grand Prix in the calendar
-            gp_info = None
+            # 2. Determine the next race
+            next_race = None
             for _, race in calendar.iterrows():
-                if race['EventName'] == gp_name:
-                    gp_info = race
+                race_date = pd.to_datetime(race['EventDate'])
+                if race_date > datetime.now():
+                    next_race = race
                     break
             
-            # 2. Fetch current standings
-            self.agent_logger.task_start("Fetching current standings")
+            if next_race is None:
+                self.agent_logger.error("Could not determine next race")
+                raise ValueError(f"No upcoming races found for year {year}")
+            
+            # 3. Store information about the next race
+            gp_name = next_race['EventName']
+            circuit_name = next_race['OfficialEventName']
+            race_date = next_race['EventDate']
+            
+            results['next_race'] = {
+                'name': gp_name,
+                'circuit': circuit_name,
+                'date': race_date,
+                'round': next_race['RoundNumber'] if 'RoundNumber' in next_race else None
+            }
+            
+            self.agent_logger.info(f"Next race: {gp_name} at {circuit_name} on {race_date}")
+            
+            # NOUVEAU : Récupérer les classements actuels des pilotes
+            self.agent_logger.task_start("Fetching current driver standings")
             driver_standings = self.fastf1_client.get_driver_standings(year)
-            driver_standings_path = self._save_data_to_file(
-                driver_standings, 'driver_standings', year=year
-            )
+            if driver_standings is not None and not driver_standings.empty:
+                driver_standings_path = self._save_data_to_file(driver_standings, 'driver_standings', year=year)
+                results['data_paths']['driver_standings'] = driver_standings_path
+                self.agent_logger.info(f"Driver standings saved to {driver_standings_path}")
+            self.agent_logger.task_complete("Fetching current driver standings")
             
+            # NOUVEAU : Récupérer les classements actuels des constructeurs
+            self.agent_logger.task_start("Fetching current constructor standings")
             constructor_standings = self.fastf1_client.get_constructor_standings(year)
-            constructor_standings_path = self._save_data_to_file(
-                constructor_standings, 'constructor_standings', year=year
-            )
+            if constructor_standings is not None and not constructor_standings.empty:
+                constructor_standings_path = self._save_data_to_file(constructor_standings, 'constructor_standings', year=year)
+                results['data_paths']['constructor_standings'] = constructor_standings_path
+                self.agent_logger.info(f"Constructor standings saved to {constructor_standings_path}")
+            self.agent_logger.task_complete("Fetching current constructor standings")
             
-            results['driver_standings'] = driver_standings_path
-            results['constructor_standings'] = constructor_standings_path
-            results['data_paths']['driver_standings'] = driver_standings_path
-            results['data_paths']['constructor_standings'] = constructor_standings_path
-            self.agent_logger.task_complete("Fetching current standings")
-            
-            # 3. Fetch specific Grand Prix data
-            for session_type in session_types:
-                self.agent_logger.task_start(f"Fetching {session_type} data for {gp_name}")
-                
-                # Check if the session exists
-                try:
-                    session_data = self.fastf1_client.get_session(year, gp_name, session_type)
-                    
-                    # Get session results
-                    if session_type == 'R':
-                        data = self.fastf1_client.get_race_results(year, gp_name)
-                        subdir = 'races'
-                    elif session_type == 'Q':
-                        data = self.fastf1_client.get_qualifying_results(year, gp_name)
-                        subdir = 'qualifying'
-                    elif session_type == 'S':
-                        data = self.fastf1_client.get_sprint_results(year, gp_name)
-                        subdir = 'races'
-                    else:  # Practice sessions
-                        data = self.fastf1_client.get_session_lap_data(year, gp_name, session_type)
-                        subdir = 'practice'
-                    
-                    if data is not None and not data.empty:
-                        # Save data to file
-                        file_path = self._save_data_to_file(
-                            data, f"{gp_name.replace(' ', '_')}_{session_type}",
-                            year=year, subdir=subdir
-                        )
-                        
-                        results['sessions'][session_type] = file_path
-                        results['data_paths'][f"{gp_name}_{session_type}"] = file_path
-                    else:
-                        self.agent_logger.warning(f"No data available for {session_type} session")
-                        
-                except Exception as e:
-                    self.agent_logger.error(f"Error fetching {session_type} data: {str(e)}")
-                    # Continue with the next session type
-                
-                self.agent_logger.task_complete(f"Fetching {session_type} data for {gp_name}")
+            # NOUVEAU : Récupérer les informations sur les pilotes actuels
+            self.agent_logger.task_start("Fetching current driver information")
+            driver_info = self.fastf1_client.get_driver_info(year)
+            if driver_info is not None and not driver_info.empty:
+                driver_info_path = self._save_data_to_file(driver_info, 'current_drivers', year=year)
+                results['data_paths']['current_drivers'] = driver_info_path
+                self.agent_logger.info(f"Driver information saved to {driver_info_path}")
+            self.agent_logger.task_complete("Fetching current driver information")
             
             # 4. Fetch historical data for this circuit
-            if gp_info is not None:
-                circuit_name = gp_info['EventName']
-                self.agent_logger.task_start(f"Fetching historical data for {circuit_name}")
-                
-                historical_data = []
-                
-                # Collect data from previous years
-                for hist_year in range(year - historical_years, year):
-                    try:
-                        # Check if there was a race at this circuit in the historical year
-                        hist_calendar = self.fastf1_client.get_race_calendar(hist_year)
-                        circuit_found = False
-                        
-                        for _, hist_race in hist_calendar.iterrows():
-                            # Try to match by circuit name
-                            if hist_race['EventName'] == circuit_name:
-                                circuit_found = True
-                                hist_gp = hist_race['EventName']
-                                break
-                        
-                        if not circuit_found:
-                            self.agent_logger.warning(f"No race found at {circuit_name} in {hist_year}")
-                            continue
-                        
-                        # Get historical race results
-                        hist_results = self.fastf1_client.get_race_results(hist_year, hist_gp)
-                        if hist_results is not None and not hist_results.empty:
-                            historical_data.append(hist_results)
-                            
-                            # Save individual historical data
-                            file_path = self._save_data_to_file(
-                                hist_results, f"{hist_gp.replace(' ', '_')}_R",
-                                year=hist_year, subdir='historical'
-                            )
-                            
-                            results['historical_data'][f"{hist_year}_{hist_gp}"] = file_path
-                            results['data_paths'][f"historical_{hist_year}_{hist_gp}"] = file_path
-                        
-                    except Exception as e:
-                        self.agent_logger.error(f"Error fetching historical data for {hist_year}: {str(e)}")
-                
-                # Combine historical data if available
-                if historical_data:
-                    combined_historical = pd.concat(historical_data, ignore_index=True)
-                    file_path = self._save_data_to_file(
-                        combined_historical, f"{circuit_name.replace(' ', '_')}_historical",
-                        year=year, subdir='historical'
-                    )
+            self.agent_logger.task_start(f"Fetching historical data for {gp_name}")
+            
+            historical_data = []
+            
+            # Collect data from previous years
+            for year_offset in range(1, historical_years + 1):
+                hist_year = year - year_offset
+                try:
+                    # Check if there was a race at this circuit in the historical year
+                    hist_calendar = self.fastf1_client.get_race_calendar(hist_year)
+                    circuit_found = False
                     
-                    results['historical_data']['combined'] = file_path
-                    results['data_paths'][f"historical_combined_{circuit_name}"] = file_path
+                    for _, hist_race in hist_calendar.iterrows():
+                        # Try to match by circuit name
+                        if hist_race['EventName'] == gp_name:
+                            circuit_found = True
+                            hist_gp = hist_race['EventName']
+                            break
+                    
+                    if not circuit_found:
+                        self.agent_logger.warning(f"No race found at {gp_name} in {hist_year}")
+                        continue
+                    
+                    # Get historical race results
+                    hist_results = self.fastf1_client.get_race_results(hist_year, hist_gp)
+                    if hist_results is not None and not hist_results.empty:
+                        historical_data.append(hist_results)
+                        
+                        # Save individual historical data
+                        file_path = self._save_data_to_file(
+                            hist_results, f"{hist_gp.replace(' ', '_')}_R",
+                            year=hist_year, subdir='historical'
+                        )
+                        
+                        results['historical_data'][f"{hist_year}_{hist_gp}"] = file_path
+                        results['data_paths'][f"historical_{hist_year}_{hist_gp}"] = file_path
+                    
+                except Exception as e:
+                    self.agent_logger.error(f"Error fetching historical data for {hist_year}: {str(e)}")
+            
+            # Combine historical data if available
+            if historical_data:
+                combined_historical = pd.concat(historical_data, ignore_index=True)
+                file_path = self._save_data_to_file(
+                    combined_historical, f"{gp_name.replace(' ', '_')}_historical",
+                    year=year, subdir='historical'
+                )
                 
-                self.agent_logger.task_complete(f"Fetching historical data for {circuit_name}")
+                results['historical_data']['combined'] = file_path
+                results['data_paths'][f"historical_combined_{gp_name}"] = file_path
+            
+            self.agent_logger.task_complete(f"Fetching historical data for {gp_name}")
             
             # Publish data collection completed event
             self.publish_event("data_collection_completed", {
                 "year": year,
-                "gp_name": gp_name,
+                "next_race": results['next_race'],
                 "data_paths": results['data_paths']
             })
             
@@ -271,12 +231,10 @@ class DataCollectorAgent(F1BaseAgent):
             # Publish data collection failed event
             self.publish_event("data_collection_failed", {
                 "year": year,
-                "gp_name": gp_name,
                 "error": str(e)
             })
             
             raise
-    
     def _save_data_to_file(self, data: pd.DataFrame, name: str, year: int, 
                           subdir: str = None) -> str:
         """

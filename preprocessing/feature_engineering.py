@@ -214,9 +214,9 @@ class F1FeatureEngineer:
             DataFrame with additional team-related features
         """
         result_df = df.copy()
-        
-        # Check if we have team information
-        team_cols = ['Team', 'team', 'Constructor', 'constructor']
+    
+        # Check if we have team information - élargi pour inclure TeamName
+        team_cols = ['Team', 'team', 'Constructor', 'constructor', 'TeamName']
         team_col = next((col for col in team_cols if col in result_df.columns), None)
         
         if team_col is None:
@@ -248,12 +248,13 @@ class F1FeatureEngineer:
                 result_df['grid_vs_teammate'] = result_df['GridPosition'] - result_df['team_avg_grid']
             
             # If we have historical data, create more detailed team performance features
-            if historical_df is not None and 'Team' in historical_df.columns:
+            if historical_df is not None:
                 logger.info("Using historical data for team performance features")
                 
-                # Standardize team column in historical data if needed
-                if team_col != 'Team' and team_col in historical_df.columns:
-                    historical_df['Team'] = historical_df[team_col]
+                # Standardize team column in historical data
+                historical_team_col = next((col for col in team_cols if col in historical_df.columns), None)
+                if historical_team_col is not None and historical_team_col != 'Team':
+                    historical_df['Team'] = historical_df[historical_team_col]
                 
                 # Calculate team's historical performance
                 if 'Points' in historical_df.columns:
@@ -315,9 +316,9 @@ class F1FeatureEngineer:
             DataFrame with additional driver-related features
         """
         result_df = df.copy()
-        
-        # Check if we have driver information
-        driver_cols = ['Driver', 'driver', 'DriverNumber', 'driver_number']
+    
+        # Check if we have driver information - élargi pour inclure Abbreviation
+        driver_cols = ['Driver', 'driver', 'Abbreviation', 'BroadcastName', 'DriverNumber']
         driver_col = next((col for col in driver_cols if col in result_df.columns), None)
         
         if driver_col is None:
@@ -333,12 +334,24 @@ class F1FeatureEngineer:
         # Create features
         try:
             # If we have historical data, create detailed driver performance features
-            if historical_df is not None and 'Driver' in historical_df.columns:
+            if historical_df is not None:
                 logger.info("Using historical data for driver performance features")
                 
-                # Standardize driver column in historical data if needed
-                if driver_col != 'Driver' and driver_col in historical_df.columns:
-                    historical_df['Driver'] = historical_df[driver_col]
+                # Standardize driver column in historical data
+                historical_driver_col = next((col for col in driver_cols if col in historical_df.columns), None)
+                if historical_driver_col is not None and historical_driver_col != 'Driver':
+                    historical_df['Driver'] = historical_df[historical_driver_col]
+                
+                # Ensure Position column exists in historical data
+                if 'Position' not in historical_df.columns:
+                    # Try alternative columns for position
+                    position_cols = ['ClassifiedPosition', 'FinishingPosition', 'position']
+                    pos_col = next((col for col in position_cols if col in historical_df.columns), None)
+                    if pos_col:
+                        historical_df['Position'] = pd.to_numeric(historical_df[pos_col], errors='coerce')
+                    elif 'Status' in historical_df.columns:
+                        # Extract position from Status if it contains position info
+                        historical_df['Position'] = historical_df['Status'].str.extract(r'Finished (\d+)').astype(float)
                 
                 # Calculate driver's historical performance
                 if 'Points' in historical_df.columns:
@@ -360,32 +373,32 @@ class F1FeatureEngineer:
                     # Calculate finish rate
                     driver_finishes = historical_df.groupby('Driver').apply(
                         lambda x: (x['Status'].str.contains('Finished', case=False) | 
-                                  ~x['Status'].str.contains('DNF|DNS|DSQ', case=False, regex=True)).mean()
+                                ~x['Status'].str.contains('DNF|DNS|DSQ', case=False, regex=True)).mean()
                     ).reset_index(name='driver_finish_rate')
                     
                     result_df = pd.merge(result_df, driver_finishes, on='Driver', how='left')
-                
-                # Driver's performance on specific track types
-                if 'TrackName' in historical_df.columns and 'TrackName' in result_df.columns:
-                    # Define track types (simplified)
-                    street_circuits = ['monaco', 'baku', 'singapore', 'jeddah', 'las_vegas']
-                    high_speed_circuits = ['monza', 'spa', 'silverstone', 'suzuka', 'spielberg', 'barcelona']
                     
-                    # Add track type info to historical data
-                    historical_df['is_street_circuit'] = historical_df['TrackName'].str.lower().isin(street_circuits)
-                    historical_df['is_high_speed_circuit'] = historical_df['TrackName'].str.lower().isin(high_speed_circuits)
-                    
-                    # Calculate driver performance by track type
-                    if 'Position' in historical_df.columns:
-                        # Street circuits
-                        street_perf = historical_df[historical_df['is_street_circuit']].groupby('Driver')['Position'].mean().reset_index()
-                        street_perf.rename(columns={'Position': 'driver_street_circuit_avg_pos'}, inplace=True)
-                        result_df = pd.merge(result_df, street_perf, on='Driver', how='left')
+                    # Driver's performance on specific track types
+                    if 'TrackName' in historical_df.columns and 'TrackName' in result_df.columns:
+                        # Define track types (simplified)
+                        street_circuits = ['monaco', 'baku', 'singapore', 'jeddah', 'las_vegas']
+                        high_speed_circuits = ['monza', 'spa', 'silverstone', 'suzuka', 'spielberg', 'barcelona']
                         
-                        # High-speed circuits
-                        speed_perf = historical_df[historical_df['is_high_speed_circuit']].groupby('Driver')['Position'].mean().reset_index()
-                        speed_perf.rename(columns={'Position': 'driver_high_speed_circuit_avg_pos'}, inplace=True)
-                        result_df = pd.merge(result_df, speed_perf, on='Driver', how='left')
+                        # Add track type info to historical data
+                        historical_df['is_street_circuit'] = historical_df['TrackName'].str.lower().isin(street_circuits)
+                        historical_df['is_high_speed_circuit'] = historical_df['TrackName'].str.lower().isin(high_speed_circuits)
+                        
+                        # Calculate driver performance by track type
+                        if 'Position' in historical_df.columns:
+                            # Street circuits
+                            street_perf = historical_df[historical_df['is_street_circuit']].groupby('Driver')['Position'].mean().reset_index()
+                            street_perf.rename(columns={'Position': 'driver_street_circuit_avg_pos'}, inplace=True)
+                            result_df = pd.merge(result_df, street_perf, on='Driver', how='left')
+                            
+                            # High-speed circuits
+                            speed_perf = historical_df[historical_df['is_high_speed_circuit']].groupby('Driver')['Position'].mean().reset_index()
+                            speed_perf.rename(columns={'Position': 'driver_high_speed_circuit_avg_pos'}, inplace=True)
+                            result_df = pd.merge(result_df, speed_perf, on='Driver', how='left')
                 
                 # Driver's performance on current track
                 if 'TrackName' in historical_df.columns and 'TrackName' in result_df.columns:
@@ -456,9 +469,9 @@ class F1FeatureEngineer:
             DataFrame with additional circuit-related features
         """
         result_df = df.copy()
-        
-        # Check if we have circuit information
-        circuit_cols = ['TrackName', 'Circuit', 'track', 'circuit']
+    
+        # Check if we have circuit information - élargi pour inclure OfficialEventName
+        circuit_cols = ['TrackName', 'Circuit', 'track', 'circuit', 'OfficialEventName', 'EventName']
         circuit_col = next((col for col in circuit_cols if col in result_df.columns), None)
         
         if circuit_col is None:
