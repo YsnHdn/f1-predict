@@ -136,7 +136,7 @@ class F1InitialModel(F1PredictionModel):
         
         logger.info(f"Prepared features with shape {X.shape}")
         return X
-    
+
     def train(self, X: pd.DataFrame, y: pd.Series) -> None:
         """
         Train the initial model using historical race data.
@@ -145,11 +145,24 @@ class F1InitialModel(F1PredictionModel):
             X: Feature DataFrame
             y: Target Series with race positions or points
         """
+        from preprocessing.data_cleaning import F1DataCleaner
+        
+        # Clean data types to avoid conflicts
+        data_cleaner = F1DataCleaner()
+        X_cleaned = data_cleaner.clean_data_types(X)
+        
         # Store the target type
         self.target = y.name
         
-        # Keep track of the feature columns
-        feature_cols = [col for col in X.columns if col not in ['Driver', 'TrackName', 'Circuit']]
+        # Keep track of the feature columns (excluding non-features)
+        non_feature_cols = ['Driver', 'TrackName', 'Circuit', 'Team', 'Date', 'Year', 'GrandPrix']
+        
+        # Strictement sélectionner uniquement les colonnes numériques
+        numeric_cols = X_cleaned.select_dtypes(include=['number']).columns.tolist()
+        
+        # Filter out non-feature columns from numeric columns
+        feature_cols = [col for col in numeric_cols if col not in non_feature_cols]
+        
         self.features = feature_cols
         
         if not feature_cols:
@@ -157,9 +170,14 @@ class F1InitialModel(F1PredictionModel):
             return
         
         try:
+            # Log the feature datatypes for debugging
+            logger.info("Feature datatypes:")
+            for col in feature_cols:
+                logger.info(f"  {col}: {X_cleaned[col].dtype}")
+            
             # Fit the model
-            logger.info(f"Training {self.estimator_type} model on {len(X)} samples with {len(feature_cols)} features")
-            self.model.fit(X[feature_cols], y)
+            logger.info(f"Training {self.estimator_type} model on {len(X_cleaned)} samples with {len(feature_cols)} features")
+            self.model.fit(X_cleaned[feature_cols], y)
             
             # Update model state
             self.is_trained = True
@@ -179,7 +197,10 @@ class F1InitialModel(F1PredictionModel):
         
         except Exception as e:
             logger.error(f"Error during model training: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
     
+          
     def predict(self, X: pd.DataFrame) -> np.ndarray:
         """
         Make predictions using the trained model.
@@ -194,16 +215,27 @@ class F1InitialModel(F1PredictionModel):
             logger.error("Model is not trained, cannot make predictions")
             return np.array([])
         
+        from preprocessing.data_cleaning import F1DataCleaner
+        # Clean data types to avoid conflicts
+        data_cleaner = F1DataCleaner()
+        X_cleaned = data_cleaner.clean_data_types(X)
+        
         # Extract feature columns (excluding reference columns)
-        feature_cols = [col for col in X.columns if col in self.features]
+        non_feature_cols = ['Driver', 'TrackName', 'Circuit', 'Team', 'Date', 'Year', 'GrandPrix']
+        feature_cols = [col for col in X_cleaned.columns if col in self.features]
         
         if not feature_cols:
             logger.error("No valid feature columns found for prediction")
             return np.array([])
         
         try:
+            # Log the feature datatypes for debugging
+            logger.info("Prediction feature datatypes:")
+            for col in feature_cols:
+                logger.info(f"  {col}: {X_cleaned[col].dtype}")
+            
             # Make predictions
-            raw_predictions = self.model.predict(X[feature_cols])
+            raw_predictions = self.model.predict(X_cleaned[feature_cols])
             
             # For position predictions, ensure they are integers and within valid range
             if self.target.lower() in ['position', 'finishing_position', 'race_position']:

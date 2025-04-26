@@ -71,230 +71,243 @@ class WeatherMonitorAgent(F1BaseAgent):
             )
         
     def execute(self, context: Dict[str, Any] = None) -> Dict[str, Any]:
-            """
-            Execute weather monitoring and data collection.
-            
-            Args:
-                context: Context with information needed for weather monitoring
-                    Expected keys:
-                    - circuit: Circuit name/identifier
-                    - race_date: Date of the race (string in YYYY-MM-DD format or datetime)
-                    - days_range: Number of days before and after race to collect weather data
-                    - update_frequency: How frequently to update forecasts (in hours)
-                    
-            Returns:
-                Dictionary with collected weather data paths and current conditions
-            """
-            if context is None:
-                context = {}
-            
-            # Extract parameters from context
-            circuit = context.get('circuit', None)
-            race_date = context.get('race_date', None)
-            days_range = context.get('days_range', 3)
-            update_frequency = context.get('update_frequency', 6)  # hours
-            
-            # Validate inputs
-            if circuit is None:
-                self.agent_logger.error("No circuit specified for weather monitoring")
-                raise ValueError("Circuit name is required for weather monitoring")
-            
-            # Convert race_date string to datetime if needed
-            if isinstance(race_date, str):
-                try:
-                    race_date = datetime.strptime(race_date, '%Y-%m-%d')
-                except ValueError:
-                    self.agent_logger.error(f"Invalid race date format: {race_date}")
-                    raise ValueError("Race date must be in YYYY-MM-DD format")
-            
-            self.agent_logger.info(f"Starting weather monitoring for: Circuit={circuit}, Race date={race_date}")
-            
-            # Calculate date range
-            if race_date:
-                start_date = race_date - timedelta(days=days_range)
-                end_date = race_date + timedelta(days=days_range)
-            else:
-                # If no race date provided, use current date
-                current_date = datetime.now()
-                start_date = current_date - timedelta(days=days_range)
-                end_date = current_date + timedelta(days=days_range)
-                race_date = current_date  # Use current date as race date
-            
-            # Store results
-            results = {
-                'circuit': circuit,
-                'race_date': race_date.strftime('%Y-%m-%d'),
-                'data_paths': {},
-                'current_conditions': None,
-                'forecast': None,
-                'race_day_forecast': None,
-                'historical_data': None,
-                'weather_alerts': None,
-                'weather_impact': None
-            }
-            
+        """
+        Execute weather monitoring and data collection.
+        
+        Args:
+            context: Context with information needed for weather monitoring
+                Expected keys:
+                - circuit: Circuit name/identifier
+                - race_date: Date of the race (string in YYYY-MM-DD format or datetime)
+                - days_range: Number of days before and after race to collect weather data
+                - update_frequency: How frequently to update forecasts (in hours)
+                
+        Returns:
+            Dictionary with collected weather data paths and current conditions
+        """
+        if context is None:
+            context = {}
+        
+        # Extract parameters from context
+        circuit = context.get('circuit', None)
+        race_date = context.get('race_date', None)
+        days_range = context.get('days_range', 3)
+        update_frequency = context.get('update_frequency', 6)  # hours
+        
+        # Validate inputs
+        if circuit is None:
+            self.agent_logger.error("No circuit specified for weather monitoring")
+            raise ValueError("Circuit name is required for weather monitoring")
+        
+        # Convert race_date string to datetime if needed
+        if isinstance(race_date, str):
             try:
-                # 1. Get current weather conditions
-                self.agent_logger.task_start("Fetching current weather conditions")
-                current_weather = self.weather_client.get_current_weather(circuit)
+                race_date = datetime.strptime(race_date, '%Y-%m-%d')
+            except ValueError:
+                self.agent_logger.error(f"Invalid race date format: {race_date}")
+                raise ValueError("Race date must be in YYYY-MM-DD format")
+        
+        self.agent_logger.info(f"Starting weather monitoring for: Circuit={circuit}, Race date={race_date}")
+        
+        # Calculate date range
+        if race_date:
+            start_date = race_date - timedelta(days=days_range)
+            end_date = race_date + timedelta(days=days_range)
+        else:
+            # If no race date provided, use current date
+            current_date = datetime.now()
+            start_date = current_date - timedelta(days=days_range)
+            end_date = current_date + timedelta(days=days_range)
+            race_date = current_date  # Use current date as race date
+        
+        # Store results
+        results = {
+            'circuit': circuit,
+            'race_date': race_date.strftime('%Y-%m-%d'),
+            'data_paths': {},
+            'current_conditions': None,
+            'forecast': None,
+            'race_day_forecast': None,
+            'historical_data': None,
+            'weather_alerts': None,
+            'weather_impact': None
+        }
+        
+        try:
+            # 1. Get current weather conditions
+            self.agent_logger.task_start("Fetching current weather conditions")
+            current_weather = self.weather_client.get_current_weather(circuit)
+            
+            if current_weather is not None and not current_weather.empty:
+                # Save current weather data
+                current_weather_path = self._save_data_to_file(
+                    current_weather, f"{circuit}_current",
+                    subdir='forecast'
+                )
                 
-                if current_weather is not None and not current_weather.empty:
-                    # Save current weather data
-                    current_weather_path = self._save_data_to_file(
-                        current_weather, f"{circuit}_current",
+                results['current_conditions'] = current_weather_path
+                results['data_paths']['current_conditions'] = current_weather_path
+                
+                # Also store the actual data for immediate use
+                current_weather_dict = current_weather.to_dict(orient='records')
+                if current_weather_dict:
+                    results['current_weather_data'] = current_weather_dict[0]
+            
+            self.agent_logger.task_complete("Fetching current weather conditions")
+            
+            # 2. Get weather forecast for the race weekend
+            self.agent_logger.task_start("Fetching weather forecast")
+            forecast = self.weather_client.get_weather_forecast(circuit, days=days_range*2)
+            
+            if forecast is not None and not forecast.empty:
+                # Save forecast data
+                forecast_path = self._save_data_to_file(
+                    forecast, f"{circuit}_forecast",
+                    subdir='forecast'
+                )
+                
+                results['forecast'] = forecast_path
+                results['data_paths']['forecast'] = forecast_path
+            
+            self.agent_logger.task_complete("Fetching weather forecast")
+            
+            # 3. Get specific race day forecast if race_date is provided
+            if race_date:
+                self.agent_logger.task_start("Fetching race day forecast")
+                
+                # Essayer de récupérer l'heure de départ de la course
+                race_start_time = None
+                try:
+                    import fastf1
+                    # Utiliser le circuit comme identifiant pour FastF1
+                    session = fastf1.get_session(race_date.year, circuit, 'R')
+                    session.load()
+                    race_start_time = session.date  # Contient la date et l'heure de départ en UTC
+                    self.agent_logger.info(f"Race start time for {circuit}: {race_start_time}")
+                except Exception as e:
+                    self.agent_logger.warning(f"Unable to retrieve race start time: {str(e)}")
+                
+                race_day_forecast = self.weather_client.get_weather_for_race_day(
+                    circuit, race_date, race_start_time=race_start_time
+                )
+                
+                if race_day_forecast is not None and not race_day_forecast.empty:
+                    # Save race day forecast
+                    race_day_path = self._save_data_to_file(
+                        race_day_forecast, f"{circuit}_race_day",
                         subdir='forecast'
                     )
                     
-                    results['current_conditions'] = current_weather_path
-                    results['data_paths']['current_conditions'] = current_weather_path
+                    results['race_day_forecast'] = race_day_path
+                    results['data_paths']['race_day_forecast'] = race_day_path
                     
-                    # Also store the actual data for immediate use
-                    current_weather_dict = current_weather.to_dict(orient='records')
-                    if current_weather_dict:
-                        results['current_weather_data'] = current_weather_dict[0]
+                    # Extract key race conditions for prediction models
+                    race_conditions = self._extract_race_conditions(race_day_forecast)
+                    results['race_conditions'] = race_conditions
                 
-                self.agent_logger.task_complete("Fetching current weather conditions")
+                self.agent_logger.task_complete("Fetching race day forecast")
+            
+            # 4. Get historical weather data for this circuit
+            self.agent_logger.task_start("Fetching historical weather data")
+            
+            # Use start and end date from previous years
+            historical_data = []
+            
+            # Get data for the same period in previous 3 years
+            for year_offset in range(1, 4):
+                hist_start = start_date.replace(year=start_date.year - year_offset)
+                hist_end = end_date.replace(year=end_date.year - year_offset)
                 
-                # 2. Get weather forecast for the race weekend
-                self.agent_logger.task_start("Fetching weather forecast")
-                forecast = self.weather_client.get_weather_forecast(circuit, days=days_range*2)
-                
-                if forecast is not None and not forecast.empty:
-                    # Save forecast data
-                    forecast_path = self._save_data_to_file(
-                        forecast, f"{circuit}_forecast",
-                        subdir='forecast'
-                    )
-                    
-                    results['forecast'] = forecast_path
-                    results['data_paths']['forecast'] = forecast_path
-                
-                self.agent_logger.task_complete("Fetching weather forecast")
-                
-                # 3. Get specific race day forecast if race_date is provided
-                if race_date:
-                    self.agent_logger.task_start("Fetching race day forecast")
-                    race_day_forecast = self.weather_client.get_weather_for_race_day(
-                        circuit, race_date
-                    )
-                    
-                    if race_day_forecast is not None and not race_day_forecast.empty:
-                        # Save race day forecast
-                        race_day_path = self._save_data_to_file(
-                            race_day_forecast, f"{circuit}_race_day",
-                            subdir='forecast'
+                # Get historical data for each day in the range
+                current_date = hist_start
+                while current_date <= hist_end:
+                    try:
+                        hist_weather = self.weather_client.get_historical_weather(
+                            circuit, current_date
                         )
                         
-                        results['race_day_forecast'] = race_day_path
-                        results['data_paths']['race_day_forecast'] = race_day_path
-                        
-                        # Extract key race conditions for prediction models
-                        race_conditions = self._extract_race_conditions(race_day_forecast)
-                        results['race_conditions'] = race_conditions
+                        if hist_weather is not None and not hist_weather.empty:
+                            historical_data.append(hist_weather)
+                    except Exception as e:
+                        self.agent_logger.warning(f"Error fetching historical data for {current_date}: {str(e)}")
                     
-                    self.agent_logger.task_complete("Fetching race day forecast")
+                    current_date += timedelta(days=1)
+            
+            # Combine historical data if available
+            if historical_data:
+                combined_historical = pd.concat(historical_data, ignore_index=True)
+                historical_path = self._save_data_to_file(
+                    combined_historical, f"{circuit}_historical",
+                    subdir='historical'
+                )
                 
-                # 4. Get historical weather data for this circuit
-                self.agent_logger.task_start("Fetching historical weather data")
+                results['historical_data'] = historical_path
+                results['data_paths']['historical_data'] = historical_path
+            
+            self.agent_logger.task_complete("Fetching historical weather data")
+            
+            # 5. Get weather alerts
+            self.agent_logger.task_start("Checking weather alerts")
+            weather_alerts = self.weather_client.get_weather_alerts(circuit)
+            
+            if weather_alerts:
+                # Convert to DataFrame for saving
+                alerts_df = pd.DataFrame(weather_alerts)
+                alerts_path = self._save_data_to_file(
+                    alerts_df, f"{circuit}_alerts",
+                    subdir='alerts'
+                )
                 
-                # Use start and end date from previous years
-                historical_data = []
+                results['weather_alerts'] = alerts_path
+                results['data_paths']['weather_alerts'] = alerts_path
                 
-                # Get data for the same period in previous 3 years
-                for year_offset in range(1, 4):
-                    hist_start = start_date.replace(year=start_date.year - year_offset)
-                    hist_end = end_date.replace(year=end_date.year - year_offset)
-                    
-                    # Get historical data for each day in the range
-                    current_date = hist_start
-                    while current_date <= hist_end:
-                        try:
-                            hist_weather = self.weather_client.get_historical_weather(
-                                circuit, current_date
-                            )
-                            
-                            if hist_weather is not None and not hist_weather.empty:
-                                historical_data.append(hist_weather)
-                        except Exception as e:
-                            self.agent_logger.warning(f"Error fetching historical data for {current_date}: {str(e)}")
-                        
-                        current_date += timedelta(days=1)
+                # Also include alerts directly
+                results['active_alerts'] = weather_alerts
+            
+            self.agent_logger.task_complete("Checking weather alerts")
+            
+            # 6. Get weather impact probability
+            self.agent_logger.task_start("Analyzing weather impact")
+            weather_impact = self.weather_client.get_weather_impact_probability(circuit)
+            
+            if weather_impact:
+                # Convert to DataFrame for saving
+                impact_df = pd.DataFrame([weather_impact])
+                impact_path = self._save_data_to_file(
+                    impact_df, f"{circuit}_impact",
+                    subdir='forecast'
+                )
                 
-                # Combine historical data if available
-                if historical_data:
-                    combined_historical = pd.concat(historical_data, ignore_index=True)
-                    historical_path = self._save_data_to_file(
-                        combined_historical, f"{circuit}_historical",
-                        subdir='historical'
-                    )
-                    
-                    results['historical_data'] = historical_path
-                    results['data_paths']['historical_data'] = historical_path
+                results['weather_impact'] = impact_path
+                results['data_paths']['weather_impact'] = impact_path
                 
-                self.agent_logger.task_complete("Fetching historical weather data")
-                
-                # 5. Get weather alerts
-                self.agent_logger.task_start("Checking weather alerts")
-                weather_alerts = self.weather_client.get_weather_alerts(circuit)
-                
-                if weather_alerts:
-                    # Convert to DataFrame for saving
-                    alerts_df = pd.DataFrame(weather_alerts)
-                    alerts_path = self._save_data_to_file(
-                        alerts_df, f"{circuit}_alerts",
-                        subdir='alerts'
-                    )
-                    
-                    results['weather_alerts'] = alerts_path
-                    results['data_paths']['weather_alerts'] = alerts_path
-                    
-                    # Also include alerts directly
-                    results['active_alerts'] = weather_alerts
-                
-                self.agent_logger.task_complete("Checking weather alerts")
-                
-                # 6. Get weather impact probability
-                self.agent_logger.task_start("Analyzing weather impact")
-                weather_impact = self.weather_client.get_weather_impact_probability(circuit)
-                
-                if weather_impact:
-                    # Convert to DataFrame for saving
-                    impact_df = pd.DataFrame([weather_impact])
-                    impact_path = self._save_data_to_file(
-                        impact_df, f"{circuit}_impact",
-                        subdir='forecast'
-                    )
-                    
-                    results['weather_impact'] = impact_path
-                    results['data_paths']['weather_impact'] = impact_path
-                    
-                    # Also include impact data directly
-                    results['impact_data'] = weather_impact
-                
-                self.agent_logger.task_complete("Analyzing weather impact")
-                
-                # Publish weather monitoring completed event
-                self.publish_event("weather_monitoring_completed", {
-                    "circuit": circuit,
-                    "race_date": results['race_date'],
-                    "data_paths": results['data_paths'],
-                    "race_conditions": results.get('race_conditions', {}),
-                    "active_alerts": results.get('active_alerts', [])
-                })
-                
-                return results
-                
-            except Exception as e:
-                self.agent_logger.error(f"Error during weather monitoring: {str(e)}")
-                
-                # Publish weather monitoring failed event
-                self.publish_event("weather_monitoring_failed", {
-                    "circuit": circuit,
-                    "race_date": race_date.strftime('%Y-%m-%d') if race_date else None,
-                    "error": str(e)
-                })
-                
-                raise
+                # Also include impact data directly
+                results['impact_data'] = weather_impact
+            
+            self.agent_logger.task_complete("Analyzing weather impact")
+            
+            # Publish weather monitoring completed event
+            self.publish_event("weather_monitoring_completed", {
+                "circuit": circuit,
+                "race_date": results['race_date'],
+                "data_paths": results['data_paths'],
+                "race_conditions": results.get('race_conditions', {}),
+                "active_alerts": results.get('active_alerts', [])
+            })
+            
+            return results
+            
+        except Exception as e:
+            self.agent_logger.error(f"Error during weather monitoring: {str(e)}")
+            
+            # Publish weather monitoring failed event
+            self.publish_event("weather_monitoring_failed", {
+                "circuit": circuit,
+                "race_date": race_date.strftime('%Y-%m-%d') if race_date else None,
+                "error": str(e)
+            })
+            
+            raise
         
     def _save_data_to_file(self, data: pd.DataFrame, name: str, subdir: str = None) -> str:
             """

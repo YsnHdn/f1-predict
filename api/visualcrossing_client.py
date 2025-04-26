@@ -352,16 +352,17 @@ class VisualCrossingClient:
                 forecast_data.append(daily_forecast)
             return pd.DataFrame(forecast_data)
     
-    def get_weather_for_race_day(self, circuit: str, race_date) -> pd.DataFrame:
+    def get_weather_for_race_day(self, circuit: str, race_date, race_start_time=None) -> pd.DataFrame:
         """
-        Récupère les prévisions météo pour le jour de course.
+        Récupère les prévisions météo uniquement pour la période de course.
         
         Args:
             circuit: Nom ou identifiant du circuit
             race_date: Date de la course (string YYYY-MM-DD ou datetime)
+            race_start_time: Heure de départ de la course en UTC (si disponible)
             
         Returns:
-            DataFrame avec les prévisions météo pour la journée de course
+            DataFrame avec les prévisions météo pour la période de course
         """
         # Convertir la date si nécessaire
         if isinstance(race_date, str):
@@ -376,12 +377,23 @@ class VisualCrossingClient:
             # Si pas de coordonnées ou pas de clé API, utiliser la simulation
             simulated_data = self.get_simulated_weather(circuit, race_date)
             simulated_data['date'] = date_str
+            simulated_data['hour'] = 14  # Heure typique des courses F1
             return pd.DataFrame([simulated_data])
         
         lat, lon = coordinates
         
-        # URL de l'API pour la prévision du jour spécifique
-        url = f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/{lat},{lon}/{date_str}?key={self.api_key}&unitGroup=metric&include=hours"
+        # Déterminer la fenêtre de temps pour la course
+        if race_start_time:
+            # Si l'heure de départ est fournie, créer une fenêtre de ±30 minutes
+            start_hour = max(0, race_start_time.hour - 1)  # 1 heure avant (pour avoir une marge)
+            end_hour = min(23, race_start_time.hour + 3)   # 3 heures après (durée typique + marge)
+        else:
+            # Par défaut, utiliser une fenêtre typique des courses F1 (14h-17h locales)
+            start_hour = 13  # 1h avant l'heure typique de départ
+            end_hour = 17    # 1h après l'heure typique de fin
+        
+        # URL de l'API pour la prévision du jour spécifique avec les heures limitées
+        url = f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/{lat},{lon}/{date_str}/{start_hour}:{end_hour}?key={self.api_key}&unitGroup=metric&include=hours"
         
         try:
             response = requests.get(url)
@@ -389,59 +401,59 @@ class VisualCrossingClient:
             data = response.json()
             
             hourly_data = []
-            day_data = data.get('days', [{}])[0]
-            
-            # Récupérer les données horaires pour la journée de course (focus sur les heures de course 12-18h)
-            for hour_data in day_data.get('hours', []):
-                hour = int(hour_data.get('datetime', '00:00:00').split(':')[0])
+            if 'days' in data and data['days']:
+                day_data = data['days'][0]
                 
-                # Determiner la condition de course pour cette heure
-                precip = hour_data.get('precip', 0)
-                if precip > 5:
-                    racing_condition = 'very_wet'
-                elif precip > 2:
-                    racing_condition = 'wet'
-                elif precip > 0.5:
-                    racing_condition = 'damp'
-                else:
-                    racing_condition = 'dry'
-                
-                hourly_forecast = {
-                    'date': date_str,
-                    'hour': hour,
-                    'temp_celsius': hour_data.get('temp'),
-                    'rain_1h_mm': hour_data.get('precip', 0),
-                    'wind_speed_ms': hour_data.get('windspeed') * 0.44704 if 'windspeed' in hour_data else 0,
-                    'humidity': hour_data.get('humidity'),
-                    'cloud_cover': hour_data.get('cloudcover'),
-                    'conditions': hour_data.get('conditions'),
-                    'weather_is_dry': racing_condition == 'dry',
-                    'weather_is_any_wet': racing_condition != 'dry',
-                    'weather_is_very_wet': racing_condition == 'very_wet',
-                    'weather_temp_mild': 15 <= hour_data.get('temp', 22) <= 25,
-                    'weather_temp_hot': hour_data.get('temp', 22) > 25,
-                    'weather_high_wind': (hour_data.get('windspeed', 0) * 0.44704) > 8,
-                    'racing_condition': racing_condition
-                }
-                
-                hourly_data.append(hourly_forecast)
+                # Récupérer les données horaires pour la période de course
+                for hour_data in day_data.get('hours', []):
+                    hour = int(hour_data.get('datetime', '00:00:00').split(':')[0])
+                    
+                    # Déterminer la condition de course pour cette heure
+                    precip = hour_data.get('precip', 0)
+                    if precip > 5:
+                        racing_condition = 'very_wet'
+                    elif precip > 2:
+                        racing_condition = 'wet'
+                    elif precip > 0.5:
+                        racing_condition = 'damp'
+                    else:
+                        racing_condition = 'dry'
+                    
+                    hourly_forecast = {
+                        'date': date_str,
+                        'hour': hour,
+                        'temp_celsius': hour_data.get('temp'),
+                        'rain_1h_mm': hour_data.get('precip', 0),
+                        'wind_speed_ms': hour_data.get('windspeed') * 0.44704 if 'windspeed' in hour_data else 0,
+                        'humidity': hour_data.get('humidity'),
+                        'cloud_cover': hour_data.get('cloudcover'),
+                        'conditions': hour_data.get('conditions'),
+                        'weather_is_dry': racing_condition == 'dry',
+                        'weather_is_any_wet': racing_condition != 'dry',
+                        'weather_is_very_wet': racing_condition == 'very_wet',
+                        'weather_temp_mild': 15 <= hour_data.get('temp', 22) <= 25,
+                        'weather_temp_hot': hour_data.get('temp', 22) > 25,
+                        'weather_high_wind': (hour_data.get('windspeed', 0) * 0.44704) > 8,
+                        'racing_condition': racing_condition
+                    }
+                    
+                    hourly_data.append(hourly_forecast)
             
             return pd.DataFrame(hourly_data)
             
         except Exception as e:
             logger.error(f"Erreur lors de la récupération des données météo pour la course: {str(e)}")
             # Utiliser des données simulées en cas d'erreur
-            simulated_data = self.get_simulated_weather(circuit, race_date)
-            # Créer des données horaires simulées
             hourly_data = []
-            for hour in range(8, 21):  # Heures de la journée pertinentes pour une course
-                hourly_forecast = simulated_data.copy()
+            for hour in range(start_hour, end_hour + 1):
+                hourly_forecast = self.get_simulated_weather(circuit, race_date)
                 hourly_forecast['date'] = date_str
                 hourly_forecast['hour'] = hour
                 # Ajuster légèrement la température selon l'heure
                 hourly_forecast['temp_celsius'] += (hour - 14) * 0.5  # Plus chaud à 14h
                 hourly_data.append(hourly_forecast)
             return pd.DataFrame(hourly_data)
+    
     
     def get_historical_weather(self, circuit: str, date) -> pd.DataFrame:
         """

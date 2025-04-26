@@ -16,8 +16,6 @@ build/
 *.egg-info/
 
 # Fichiers de données
-data/raw/
-data/processed/
 *.csv
 *.json
 *.pkl
