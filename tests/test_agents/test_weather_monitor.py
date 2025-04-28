@@ -1,116 +1,114 @@
 """
-Script de test pour le client météo VisualCrossing et le WeatherMonitorAgent.
+Test script for the modified WeatherMonitorAgent.
+This script tests the functionality of getting historical weather data from FastF1.
 """
 
 import os
 import sys
 import pandas as pd
-from datetime import datetime
-from dotenv import load_dotenv
+from datetime import datetime, timedelta
 from pathlib import Path
 
-# Ajouter le chemin du projet au PYTHONPATH
-sys.path.append(os.path.abspath(os.path.dirname(os.path.dirname(__file__))))
+# Add project root to path to import modules
+sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 
-# Importer les composants
-from api.visualcrossing_client import VisualCrossingClient
+# Import the modified WeatherMonitorAgent
 from agents.weather_monitor import WeatherMonitorAgent
 
-def test_visualcrossing_client():
-    """Teste le client VisualCrossing."""
-    print("\n=== Test du client VisualCrossing ===")
+def main():
+    """Main function to test the modified WeatherMonitorAgent."""
+    print("=== Testing Modified WeatherMonitorAgent ===")
     
-    # Créer le client
-    client = VisualCrossingClient()
+    # Create FastF1 cache directory if it doesn't exist
+    cache_dir = Path('.fastf1_cache')
+    if not cache_dir.exists():
+        os.makedirs(cache_dir)
+        print(f"Created FastF1 cache directory: {cache_dir}")
     
-    # Tester les coordonnées des circuits
-    circuit = "spa"
-    coordinates = client.get_circuit_coordinates(circuit)
-    print(f"Coordonnées pour {circuit}: {coordinates}")
+    # Initialize the WeatherMonitorAgent
+    agent = WeatherMonitorAgent()
+    print("Initialized WeatherMonitorAgent")
     
-    # Tester la météo actuelle
-    current_weather = client.get_current_weather(circuit)
-    print("\nMétéo actuelle:")
-    print(current_weather.head())
+    # Test circuit and dates
+    circuit = "monza"  # Change to any circuit you want to test
+    race_date = datetime.now() + timedelta(days=30)  # Future race date
+    days_range = 3
     
-    # Tester les prévisions
-    forecast = client.get_weather_forecast(circuit, days=3)
-    print("\nPrévisions (3 jours):")
-    print(forecast.head())
+    print(f"Testing historical weather data for {circuit}")
     
-    # Tester les alertes
-    alerts = client.get_weather_alerts(circuit)
-    print("\nAlertes météo:")
-    print(alerts)
+    # Calculate date range
+    start_date = race_date - timedelta(days=days_range)
+    end_date = race_date + timedelta(days=days_range)
     
-    # Tester l'impact météo
-    impact = client.get_weather_impact_probability(circuit)
-    print("\nImpact météo:")
-    print(impact)
+    # Test getting historical weather data from FastF1
+    historical_data = agent.get_historical_weather_from_fastf1(
+        circuit, start_date, end_date, years_back=3
+    )
     
-    return True
-
-def test_weather_monitor_agent():
-    """Teste le WeatherMonitorAgent avec le client VisualCrossing."""
-    print("\n=== Test du WeatherMonitorAgent ===")
+    # Check results
+    if historical_data:
+        print(f"Successfully retrieved {len(historical_data)} historical weather datasets")
+        
+        # Print sample of the first dataset
+        if historical_data[0] is not None and not historical_data[0].empty:
+            print("\nSample of historical weather data:")
+            print(historical_data[0].head())
+            
+            # Get columns to verify
+            print("\nColumns in historical weather data:")
+            print(historical_data[0].columns.tolist())
+            
+            # Check for required weather features
+            required_cols = [
+                'temp_celsius', 'rain_mm', 'wind_speed_ms', 
+                'weather_is_dry', 'weather_is_any_wet', 'weather_temp_mild'
+            ]
+            
+            missing_cols = [col for col in required_cols if col not in historical_data[0].columns]
+            
+            if missing_cols:
+                print(f"\nWARNING: Missing required weather columns: {missing_cols}")
+            else:
+                print("\nAll required weather features are present in the data")
+                
+        else:
+            print("Retrieved historical data is empty")
+    else:
+        print("Failed to retrieve historical weather data from FastF1")
     
-    # Créer un répertoire temporaire pour les tests
-    test_dir = "test_data/weather"
-    os.makedirs(test_dir, exist_ok=True)
-    
-    # Initialiser l'agent
-    agent = WeatherMonitorAgent(data_dir=test_dir)
-    
-    # Créer un contexte de test
+    # Test the full execute method with a context
+    print("\n=== Testing full execute method ===")
     context = {
-        'circuit': 'spa',
-        'race_date': datetime.now().strftime('%Y-%m-%d'),
-        'days_range': 2
+        'circuit': circuit,
+        'race_date': race_date,
+        'days_range': days_range,
     }
     
-    # Exécuter l'agent
     try:
         results = agent.execute(context)
-        print("\nRésultats de l'agent:")
-        print(f"Circuit: {results['circuit']}")
-        print(f"Date de course: {results['race_date']}")
-        print(f"Nombre de fichiers: {len(results['data_paths'])}")
         
-        # Afficher les conditions de course
+        # Check if historical data was retrieved and saved
+        if 'historical_data' in results and results['historical_data']:
+            print(f"Successfully saved historical weather data to: {results['historical_data']}")
+        else:
+            print("No historical weather data was saved")
+            
+        # Check if forecast data was retrieved and saved
+        if 'forecast' in results and results['forecast']:
+            print(f"Successfully saved forecast weather data to: {results['forecast']}")
+        else:
+            print("No forecast weather data was saved")
+            
+        # Check if race conditions were extracted
         if 'race_conditions' in results:
-            print("\nConditions de course prévues:")
+            print("\nExtracted race conditions:")
             for key, value in results['race_conditions'].items():
                 print(f"  {key}: {value}")
         
-        return True
     except Exception as e:
-        print(f"Erreur lors du test de l'agent: {str(e)}")
-        return False
-
-def main():
-    """Fonction principale."""
-    # Charger les variables d'environnement
-    load_dotenv()
+        print(f"Error executing weather monitor: {str(e)}")
     
-    # Vérifier la clé API
-    api_key = os.environ.get('VISUALCROSSING_API_KEY')
-    if not api_key:
-        print("ATTENTION: Clé API VisualCrossing non trouvée dans l'environnement.")
-        print("Créez un fichier .env avec VISUALCROSSING_API_KEY=votre_clé_api")
-        print("Les tests utiliseront des données simulées.")
-    
-    # Tester le client
-    client_success = test_visualcrossing_client()
-    
-    # Tester l'agent si le client fonctionne
-    if client_success:
-        agent_success = test_weather_monitor_agent()
-        if agent_success:
-            print("\n✅ Tous les tests ont réussi!")
-        else:
-            print("\n❌ Test de l'agent échoué")
-    else:
-        print("\n❌ Test du client échoué")
+    print("\n=== Test Complete ===")
 
 if __name__ == "__main__":
     main()
