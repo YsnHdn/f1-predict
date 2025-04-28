@@ -77,9 +77,9 @@ class WeatherMonitorAgent(F1BaseAgent):
         )
         
     def get_historical_weather_from_fastf1(self, circuit: str, start_date: datetime, 
-                                         end_date: datetime, years_back: int = 3) -> List[pd.DataFrame]:
+                                  end_date: datetime, years_back: int = 3) -> List[pd.DataFrame]:
         """
-        Get historical weather data from FastF1 instead of VisualCrossing.
+        Get historical weather data from FastF1 for races at the same circuit.
         
         Args:
             circuit: Circuit name/identifier
@@ -91,6 +91,17 @@ class WeatherMonitorAgent(F1BaseAgent):
             List of DataFrames containing historical weather data
         """
         self.agent_logger.info(f"Fetching historical weather data from FastF1 for {circuit}")
+        
+        # If circuit is a full event name, extract location
+        if "FORMULA 1" in circuit:
+            # Try to extract the actual circuit name from the event name
+            circuit_parts = circuit.lower().split()
+            for keyword in ['grand', 'prix', 'gp']:
+                if keyword in circuit_parts:
+                    idx = circuit_parts.index(keyword)
+                    if idx > 0:  # There's something before the "grand prix" part
+                        circuit = circuit_parts[idx-1]
+                        break
         
         historical_data = []
         
@@ -108,17 +119,27 @@ class WeatherMonitorAgent(F1BaseAgent):
                     self.agent_logger.warning(f"No race calendar found for {year}")
                     continue
                 
-                # Find races at this circuit
-                circuit_races = calendar[calendar['OfficialEventName'].str.contains(circuit, case=False) | 
-                                        calendar['EventName'].str.contains(circuit, case=False)]
+                # Find a race at the same location
+                circuit_races = calendar[
+                    calendar['Location'].str.lower().str.contains(circuit.lower(), na=False)
+                ]
                 
                 if circuit_races.empty:
-                    self.agent_logger.warning(f"No races found at {circuit} in {year}")
-                    continue
+                    # Try with OfficialEventName
+                    circuit_races = calendar[
+                        calendar['OfficialEventName'].str.lower().str.contains(circuit.lower(), na=False)
+                    ]
+                    
+                if circuit_races.empty:
+                    # Try with EventName
+                    circuit_races = calendar[
+                        calendar['EventName'].str.lower().str.contains(circuit.lower(), na=False)
+                    ]
                 
-                # For each race at this circuit
-                for _, race in circuit_races.iterrows():
-                    gp_name = race['EventName']
+                if not circuit_races.empty:
+                    # Found a matching race
+                    gp_name = circuit_races.iloc[0]['EventName']
+                    self.agent_logger.info(f"Found matching race at {circuit} in {year}: {gp_name}")
                     
                     # Try to get weather data for different session types
                     for session_type in ['R', 'Q', 'FP3', 'FP2', 'FP1']:
@@ -149,12 +170,16 @@ class WeatherMonitorAgent(F1BaseAgent):
                         
                         except Exception as e:
                             self.agent_logger.warning(f"Error getting {session_type} weather for {gp_name} {year}: {str(e)}")
+                else:
+                    self.agent_logger.warning(f"No races found matching {circuit} in {year}")
             
             self.agent_logger.info(f"Retrieved {len(historical_data)} historical weather datasets from FastF1")
             return historical_data
             
         except Exception as e:
             self.agent_logger.error(f"Error fetching historical weather from FastF1: {str(e)}")
+            import traceback
+            self.agent_logger.error(traceback.format_exc())
             return []
     
     def _format_fastf1_weather_data(self, weather_data: pd.DataFrame) -> pd.DataFrame:
@@ -249,7 +274,7 @@ class WeatherMonitorAgent(F1BaseAgent):
     def execute(self, context: Dict[str, Any] = None) -> Dict[str, Any]:
         """
         Execute weather monitoring and data collection.
-        Modified to use FastF1 for historical weather data.
+        Modified to handle various date formats.
         
         Args:
             context: Context with information needed for weather monitoring
@@ -279,9 +304,14 @@ class WeatherMonitorAgent(F1BaseAgent):
         # Convert race_date string to datetime if needed
         if isinstance(race_date, str):
             try:
+                # Handle ISO format (2025-05-04T00:00:00)
+                if 'T' in race_date:
+                    race_date = race_date.split('T')[0]  # Extract just the YYYY-MM-DD part
+                
                 race_date = datetime.strptime(race_date, '%Y-%m-%d')
-            except ValueError:
-                self.agent_logger.error(f"Invalid race date format: {race_date}")
+                self.agent_logger.info(f"Parsed race date: {race_date}")
+            except ValueError as e:
+                self.agent_logger.error(f"Invalid race date format: {race_date}, error: {str(e)}")
                 raise ValueError("Race date must be in YYYY-MM-DD format")
         
         self.agent_logger.info(f"Starting weather monitoring for: Circuit={circuit}, Race date={race_date}")
@@ -311,6 +341,7 @@ class WeatherMonitorAgent(F1BaseAgent):
         }
         
         try:
+            # Rest of the method remains unchanged...
             # 1. Get current weather conditions - Still use VisualCrossing for current conditions
             self.agent_logger.task_start("Fetching current weather conditions")
             current_weather = self.weather_client.get_current_weather(circuit)
